@@ -139,53 +139,82 @@ function drawVideoBackground() {
   ctx.restore();
 }
 
-// --- efek 2 tangan: quad dari ujung jempol & telunjuk tiap tangan, isinya glitch grayscale ---
+// --- efek 2 tangan: quad dari ujung jempol & telunjuk tiap tangan, isinya glitch tipis ikut kemiringan box ---
 // urutan titik: leftThumb -> rightThumb -> rightIndex -> leftIndex -> tutup ke leftThumb
 function drawGlitchQuad(pts) {
-  const xs = pts.map(p => p.x), ys = pts.map(p => p.y);
-  const minX = Math.min(...xs), maxX = Math.max(...xs);
-  const minY = Math.min(...ys), maxY = Math.max(...ys);
-  const bw = maxX - minX, bh = maxY - minY;
-  if (bw <= 1 || bh <= 1) return;
+  const leftThumb = pts[0], rightThumb = pts[1];
+  // sudut kemiringan box, diambil dari garis jempol-jempol (sisi bawah)
+  const angle = Math.atan2(rightThumb.y - leftThumb.y, rightThumb.x - leftThumb.x);
+  const cx = pts.reduce((s, p) => s + p.x, 0) / pts.length;
+  const cy = pts.reduce((s, p) => s + p.y, 0) / pts.length;
 
-  ctx.save();
+  // proyeksiin tiap titik ke koordinat "lokal" box (biar strip glitch bisa ngikutin kemiringannya)
+  const cosA = Math.cos(-angle), sinA = Math.sin(-angle);
+  const localPts = pts.map(p => {
+    const dx = p.x - cx, dy = p.y - cy;
+    return { x: dx * cosA - dy * sinA, y: dx * sinA + dy * cosA };
+  });
+  const lxs = localPts.map(p => p.x), lys = localPts.map(p => p.y);
+  const lMinX = Math.min(...lxs), lMaxX = Math.max(...lxs);
+  const lMinY = Math.min(...lys), lMaxY = Math.max(...lys);
+  const lbw = lMaxX - lMinX, lbh = lMaxY - lMinY;
+  if (lbw <= 1 || lbh <= 1) return;
+
+  ctx.save(); // A: masuk ke frame lokal box (translate + rotate ikut kemiringan)
+  ctx.translate(cx, cy);
+  ctx.rotate(angle);
   ctx.beginPath();
-  ctx.moveTo(pts[0].x, pts[0].y);
-  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+  ctx.moveTo(localPts[0].x, localPts[0].y);
+  for (let i = 1; i < localPts.length; i++) ctx.lineTo(localPts[i].x, localPts[i].y);
   ctx.closePath();
-  ctx.clip(); // batasi semua gambar berikutnya cuma di dalam quad
+  ctx.clip(); // semua gambar berikutnya dibatasi di dalam quad
 
-  // ubah isi quad jadi hitam putih (redraw canvas sendiri dgn filter grayscale)
-  ctx.filter = "grayscale(1) contrast(1.15)";
+  // base: warna ASLI dulu (biar ga flat/grayscale semua)
+  ctx.save(); // B
+  ctx.rotate(-angle);
+  ctx.translate(-cx, -cy);
   ctx.drawImage(canvas, 0, 0, canvas.width, canvas.height, 0, 0, canvas.width, canvas.height);
-  ctx.filter = "none";
+  ctx.restore(); // balik ke frame A
 
-  // glitch: beberapa strip horizontal digeser dikit secara random tiap frame
-  const bandCount = 5;
+  // strip glitch tipis-tipis, campur grayscale & warna asli, geser ngikutin sumbu kemiringan box
+  const bandCount = 10 + Math.floor(Math.random() * 5);
   for (let i = 0; i < bandCount; i++) {
-    const bandH = Math.max(3, bh * (0.04 + Math.random() * 0.08));
-    const by = minY + Math.random() * Math.max(1, bh - bandH);
-    const shift = (Math.random() * 2 - 1) * bw * 0.08;
-    ctx.drawImage(canvas, minX, by, bw, bandH, minX + shift, by, bw, bandH);
+    const bandH = Math.max(1.5, lbh * (0.012 + Math.random() * 0.02)); // tipis
+    const by = lMinY + Math.random() * Math.max(1, lbh - bandH);
+    const isGray = Math.random() < 0.45; // sebagian grayscale, sebagian warna asli
+    const doShift = Math.random() < 0.8;
+    const shiftAmt = doShift ? (Math.random() * 2 - 1) * lbw * 0.05 : 0;
+
+    ctx.save(); // C
+    ctx.beginPath();
+    ctx.rect(lMinX, by, lbw, bandH);
+    ctx.clip(); // ke-intersect otomatis sama clip quad di A
+
+    // balik ke koordinat screen asli buat sampling video, tapi shift-nya diproyeksi
+    // ke arah sumbu box (cos/sin dari angle) biar gesernya ikut miring boxnya
+    ctx.rotate(-angle);
+    ctx.translate(-cx, -cy);
+    ctx.translate(shiftAmt * Math.cos(angle), shiftAmt * Math.sin(angle));
+
+    if (isGray) ctx.filter = "grayscale(1) contrast(1.15)";
+    ctx.drawImage(canvas, 0, 0, canvas.width, canvas.height, 0, 0, canvas.width, canvas.height);
+    ctx.filter = "none";
+    ctx.restore(); // balik ke frame A
   }
 
-  // scanline garis-garis horizontal tipis
-  ctx.strokeStyle = "rgba(0,0,0,0.25)";
+  // scanline tipis, otomatis ikut miring karena masih di frame rotate(angle)
+  ctx.strokeStyle = "rgba(0,0,0,0.15)";
   ctx.lineWidth = 1;
-  for (let y = minY; y < maxY; y += 3) {
+  for (let y = lMinY; y < lMaxY; y += 3) {
     ctx.beginPath();
-    ctx.moveTo(minX, y);
-    ctx.lineTo(maxX, y);
+    ctx.moveTo(lMinX, y);
+    ctx.lineTo(lMaxX, y);
     ctx.stroke();
   }
 
-  // tint cyan tipis biar keliatan "aktif"
-  ctx.fillStyle = "rgba(124,255,240,0.06)";
-  ctx.fillRect(minX, minY, bw, bh);
+  ctx.restore(); // A selesai, clip lepas
 
-  ctx.restore(); // lepas clip
-
-  // border quad: rata tipis semua sisi, ga ada yang ditebalin
+  // border quad: rata tipis semua sisi, koordinat screen asli
   ctx.save();
   ctx.setLineDash([5, 5]);
   ctx.lineWidth = 1.5;
