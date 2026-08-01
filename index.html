@@ -130,115 +130,58 @@ function dist(a, b) {
   return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
-// --- efek 1 tangan: bar cyber di antara jempol & telunjuk ---
-function drawFingerBar(p1, p2, t) {
-  const x1 = p1.x, y1 = p1.y;
-  const x2 = p2.x, y2 = p2.y;
-  const cx = (x1 + x2) / 2, cy = (y1 + y2) / 2;
-  const gap = Math.hypot(x2 - x1, y2 - y1);
-  const length = gap * 1.15;
-  const barHeight = length * 0.32;
-  const angle = Math.atan2(y2 - y1, x2 - x1);
+// --- efek 2 tangan: quad yang narik dari ujung jempol & telunjuk tiap tangan ---
+// urutan titik: leftThumb -> rightThumb -> rightIndex -> leftIndex -> tutup ke leftThumb
+function drawQuadFrame(leftThumb, leftIndex, rightThumb, rightIndex, t) {
+  const pts = [leftThumb, rightThumb, rightIndex, leftIndex];
 
   ctx.save();
-  ctx.translate(cx, cy);
-  ctx.rotate(angle);
+  ctx.beginPath();
+  ctx.moveTo(pts[0].x, pts[0].y);
+  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+  ctx.closePath();
 
-  ctx.fillStyle = "rgba(10, 20, 30, 0.5)";
-  ctx.fillRect(-length / 2, -barHeight / 2, length, barHeight);
+  // isi transparan
+  ctx.fillStyle = "rgba(10, 20, 30, 0.35)";
+  ctx.fill();
 
-  ctx.strokeStyle = "rgba(124, 255, 240, 0.5)";
-  ctx.lineWidth = 1;
-  for (let y = -barHeight / 2; y <= barHeight / 2; y += 4) {
-    ctx.beginPath();
-    ctx.moveTo(-length / 2, y);
-    ctx.lineTo(length / 2, y);
-    ctx.stroke();
-  }
-
-  const scanX = -length / 2 + ((t / 6) % length);
-  const grad = ctx.createLinearGradient(scanX - 15, 0, scanX + 15, 0);
-  grad.addColorStop(0, "rgba(124,255,240,0)");
-  grad.addColorStop(0.5, "rgba(124,255,240,0.9)");
-  grad.addColorStop(1, "rgba(124,255,240,0)");
-  ctx.fillStyle = grad;
-  ctx.fillRect(-length / 2, -barHeight / 2, length, barHeight);
-
-  ctx.setLineDash([6, 4]);
-  ctx.strokeStyle = "#7CFFF0";
-  ctx.lineWidth = 2;
-  ctx.shadowColor = "#7CFFF0";
-  ctx.shadowBlur = 10;
-  ctx.strokeRect(-length / 2, -barHeight / 2, length, barHeight);
+  // garis putus-putus tipis buat semua sisi
+  ctx.setLineDash([5, 5]);
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = "rgba(124,255,240,0.6)";
+  ctx.stroke();
   ctx.setLineDash([]);
+
+  // highlight garis bawah (jempol-jempol) lebih tebal & nyala, ciri khas efeknya
+  ctx.beginPath();
+  ctx.moveTo(leftThumb.x, leftThumb.y);
+  ctx.lineTo(rightThumb.x, rightThumb.y);
+  ctx.strokeStyle = "#7CFFF0";
+  ctx.lineWidth = 4;
+  ctx.shadowColor = "#7CFFF0";
+  ctx.shadowBlur = 12;
+  ctx.stroke();
   ctx.shadowBlur = 0;
+
+  // dot di tiap sudut
+  ctx.fillStyle = "#7CFFF0";
+  pts.forEach(p => {
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+    ctx.fill();
+  });
   ctx.restore();
 
+  // label di dekat sisi atas (index-index)
+  const midTopX = (leftIndex.x + rightIndex.x) / 2;
+  const midTopY = (leftIndex.y + rightIndex.y) / 2;
   ctx.save();
   ctx.font = "11px monospace";
   ctx.fillStyle = "#7CFFF0";
   ctx.shadowColor = "#000";
   ctx.shadowBlur = 4;
   ctx.textAlign = "center";
-  ctx.fillText("CYBER FRAME // ACTIVE", cx, cy - barHeight / 2 - 14 - Math.abs(Math.sin(angle)) * 10);
-  ctx.restore();
-}
-
-// --- efek 2 tangan: kotak viewfinder yang berubah sesuai jarak jempol+telunjuk ---
-function drawViewfinderBox(points, t) {
-  const xs = points.map(p => p.x), ys = points.map(p => p.y);
-  const minX = Math.min(...xs), maxX = Math.max(...xs);
-  const minY = Math.min(...ys), maxY = Math.max(...ys);
-  const w = maxX - minX, h = maxY - minY;
-  const bracket = Math.min(w, h) * 0.22;
-
-  ctx.save();
-  ctx.strokeStyle = "#7CFFF0";
-  ctx.lineWidth = 3;
-  ctx.shadowColor = "#7CFFF0";
-  ctx.shadowBlur = 10;
-
-  // 4 sudut bracket ala viewfinder kamera
-  const corners = [
-    { x: minX, y: minY, dx: 1, dy: 1 },
-    { x: maxX, y: minY, dx: -1, dy: 1 },
-    { x: minX, y: maxY, dx: 1, dy: -1 },
-    { x: maxX, y: maxY, dx: -1, dy: -1 }
-  ];
-  corners.forEach(c => {
-    ctx.beginPath();
-    ctx.moveTo(c.x, c.y + bracket * c.dy);
-    ctx.lineTo(c.x, c.y);
-    ctx.lineTo(c.x + bracket * c.dx, c.y);
-    ctx.stroke();
-  });
-
-  // garis putus-putus tipis buat border penuh
-  ctx.setLineDash([5, 6]);
-  ctx.lineWidth = 1;
-  ctx.strokeStyle = "rgba(124,255,240,0.4)";
-  ctx.shadowBlur = 0;
-  ctx.strokeRect(minX, minY, w, h);
-  ctx.setLineDash([]);
-
-  // scan line horizontal bergerak vertikal
-  const scanY = minY + ((t / 8) % h);
-  ctx.strokeStyle = "rgba(124,255,240,0.8)";
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.moveTo(minX, scanY);
-  ctx.lineTo(maxX, scanY);
-  ctx.stroke();
-
-  ctx.restore();
-
-  ctx.save();
-  ctx.font = "11px monospace";
-  ctx.fillStyle = "#7CFFF0";
-  ctx.shadowColor = "#000";
-  ctx.shadowBlur = 4;
-  ctx.textAlign = "left";
-  ctx.fillText("FRAME LOCKED // " + Math.round(w) + "x" + Math.round(h), minX, minY - 10);
+  ctx.fillText("CYBER FRAME // ACTIVE", midTopX, midTopY - 12);
   ctx.restore();
 }
 
@@ -264,28 +207,34 @@ function loop() {
 
     if (result.landmarks && result.landmarks.length > 0) {
       handCountEl.textContent = result.landmarks.length;
-      result.landmarks.forEach(lm => drawHandPoints(lm));
 
       if (result.landmarks.length >= 2) {
-        // mode 2 tangan: kotak viewfinder dari titik jempol+telunjuk tiap tangan
-        const pts = [];
-        result.landmarks.slice(0, 2).forEach(lm => {
-          pts.push(toCanvasXY(lm[4]));  // thumb tip
-          pts.push(toCanvasXY(lm[8]));  // index tip
-        });
-        drawViewfinderBox(pts, now);
-        statusText = "FRAME LOCKED (2 HANDS)";
-      } else {
-        // mode 1 tangan: bar antar jempol & telunjuk kalau pinch pas
-        const lm = result.landmarks[0];
-        const thumbTip = toCanvasXY(lm[4]);
-        const indexTip = toCanvasXY(lm[8]);
-        const d = dist(thumbTip, indexTip);
-        const refSize = Math.min(canvas.width, canvas.height);
-        if (d > refSize * 0.03 && d < refSize * 0.32) {
-          drawFingerBar(thumbTip, indexTip, now);
-          statusText = "ACTIVE (1 HAND)";
+        // 2 tangan kedeteksi -> tarik quad dari 4 titik fingertip (thumb+index tiap tangan)
+        const hand0 = result.landmarks[0];
+        const hand1 = result.landmarks[1];
+        drawHandPoints(hand0);
+        drawHandPoints(hand1);
+
+        const h0Thumb = toCanvasXY(hand0[4]);
+        const h0Index = toCanvasXY(hand0[8]);
+        const h1Thumb = toCanvasXY(hand1[4]);
+        const h1Index = toCanvasXY(hand1[8]);
+
+        // tentuin mana yang "kiri" & "kanan" berdasar posisi x di canvas
+        let leftThumb, leftIndex, rightThumb, rightIndex;
+        if (h0Thumb.x <= h1Thumb.x) {
+          leftThumb = h0Thumb; leftIndex = h0Index;
+          rightThumb = h1Thumb; rightIndex = h1Index;
+        } else {
+          leftThumb = h1Thumb; leftIndex = h1Index;
+          rightThumb = h0Thumb; rightIndex = h0Index;
         }
+
+        drawQuadFrame(leftThumb, leftIndex, rightThumb, rightIndex, now);
+        statusText = "ACTIVE (2 HANDS)";
+      } else {
+        // cuma 1 tangan -> mati total, ga gambar apa-apa
+        statusText = "STANDBY (1 HAND)";
       }
     } else {
       handCountEl.textContent = "0";
