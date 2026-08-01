@@ -141,7 +141,7 @@ function drawVideoBackground() {
 
 // --- efek 2 tangan: quad dari ujung jempol & telunjuk tiap tangan, isinya glitch tipis ikut kemiringan box ---
 // urutan titik: leftThumb -> rightThumb -> rightIndex -> leftIndex -> tutup ke leftThumb
-function drawGlitchQuad(pts) {
+function drawGlitchQuad(pts, t) {
   const leftThumb = pts[0], rightThumb = pts[1];
   // sudut kemiringan box, diambil dari garis jempol-jempol (sisi bawah)
   const angle = Math.atan2(rightThumb.y - leftThumb.y, rightThumb.x - leftThumb.x);
@@ -160,6 +160,10 @@ function drawGlitchQuad(pts) {
   const lbw = lMaxX - lMinX, lbh = lMaxY - lMinY;
   if (lbw <= 1 || lbh <= 1) return;
 
+  // offset scroll: makin gede t, makin "naik" strip2nya (kayak scroll VHS)
+  const scrollSpeed = 90; // px lokal per detik
+  const scrollOffset = (t / 1000 * scrollSpeed) % lbh;
+
   ctx.save(); // A: masuk ke frame lokal box (translate + rotate ikut kemiringan)
   ctx.translate(cx, cy);
   ctx.rotate(angle);
@@ -169,21 +173,27 @@ function drawGlitchQuad(pts) {
   ctx.closePath();
   ctx.clip(); // semua gambar berikutnya dibatasi di dalam quad
 
-  // base: warna ASLI dulu (biar ga flat/grayscale semua)
+  // base: GRAYSCALE dulu (default abu-abu)
   ctx.save(); // B
   ctx.rotate(-angle);
   ctx.translate(-cx, -cy);
+  ctx.filter = "grayscale(1) contrast(1.1)";
   ctx.drawImage(canvas, 0, 0, canvas.width, canvas.height, 0, 0, canvas.width, canvas.height);
+  ctx.filter = "none";
   ctx.restore(); // balik ke frame A
 
-  // strip glitch tipis-tipis, campur grayscale & warna asli, geser ngikutin sumbu kemiringan box
-  const bandCount = 10 + Math.floor(Math.random() * 5);
+  // strip glitch tipis-tipis, posisinya scroll ke atas terus (loop), sesekali nongolin warna asli
+  const bandCount = 12;
   for (let i = 0; i < bandCount; i++) {
-    const bandH = Math.max(1.5, lbh * (0.012 + Math.random() * 0.02)); // tipis
-    const by = lMinY + Math.random() * Math.max(1, lbh - bandH);
-    const isGray = Math.random() < 0.45; // sebagian grayscale, sebagian warna asli
-    const doShift = Math.random() < 0.8;
-    const shiftAmt = doShift ? (Math.random() * 2 - 1) * lbw * 0.05 : 0;
+    const bandH = Math.max(1.5, lbh * (0.012 + Math.random() * 0.018)); // tipis
+    // posisi dasar merata + geser scroll, dibungkus (wrap) biar looping mulus ke atas
+    const baseY = lMinY + (i / bandCount) * lbh;
+    let by = baseY - scrollOffset;
+    by = lMinY + (((by - lMinY) % lbh) + lbh) % lbh; // wrap ke rentang [lMinY, lMaxY)
+
+    const showColor = Math.random() < 0.22; // dominan abu-abu, sesekali warna asli
+    const doShift = Math.random() < 0.7;
+    const shiftAmt = doShift ? (Math.random() * 2 - 1) * lbw * 0.04 : 0;
 
     ctx.save(); // C
     ctx.beginPath();
@@ -196,16 +206,17 @@ function drawGlitchQuad(pts) {
     ctx.translate(-cx, -cy);
     ctx.translate(shiftAmt * Math.cos(angle), shiftAmt * Math.sin(angle));
 
-    if (isGray) ctx.filter = "grayscale(1) contrast(1.15)";
+    if (!showColor) ctx.filter = "grayscale(1) contrast(1.1)";
     ctx.drawImage(canvas, 0, 0, canvas.width, canvas.height, 0, 0, canvas.width, canvas.height);
     ctx.filter = "none";
     ctx.restore(); // balik ke frame A
   }
 
-  // scanline tipis, otomatis ikut miring karena masih di frame rotate(angle)
+  // scanline tipis, ikut scroll ke atas juga
   ctx.strokeStyle = "rgba(0,0,0,0.15)";
   ctx.lineWidth = 1;
-  for (let y = lMinY; y < lMaxY; y += 3) {
+  const scanPhase = scrollOffset % 3;
+  for (let y = lMinY - scanPhase; y < lMaxY; y += 3) {
     ctx.beginPath();
     ctx.moveTo(lMinX, y);
     ctx.lineTo(lMaxX, y);
@@ -295,7 +306,7 @@ function loop() {
           rightThumb = h0Thumb; rightIndex = h0Index;
         }
 
-        drawGlitchQuad([leftThumb, rightThumb, rightIndex, leftIndex]);
+        drawGlitchQuad([leftThumb, rightThumb, rightIndex, leftIndex], now);
         statusText = "ACTIVE (2 HANDS)";
       } else {
         // cuma 1 tangan -> mati total, ga gambar apa-apa
