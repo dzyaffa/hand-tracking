@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<title>Cyber Frame Finger Tracking</title>
+<style>
+  html, body {
+    margin: 0; padding: 0; background: #000; overflow: hidden;
+    font-family: 'Courier New', monospace; color: #7CFFF0;
+  }
+  #container {
+    position: relative; width: 100vw; height: 100vh;
+    display: flex; align-items: center; justify-content: center;
+  }
+  video, canvas {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    object-fit: cover;
+    transform: scaleX(-1); /* mirror biar kaya kamera depan */
+  }
+  #overlay-ui {
+    position: absolute; top: 12px; left: 12px; z-index: 10;
+    font-size: 12px; letter-spacing: 1px; text-shadow: 0 0 6px #0ff;
+    pointer-events: none;
+  }
+  #status {
+    position: absolute; bottom: 16px; left: 50%; transform: translateX(-50%);
+    font-size: 12px; color: #7CFFF0; text-shadow: 0 0 6px #0ff;
+    z-index: 10; text-align: center; width: 90%;
+  }
+  #loading {
+    position: absolute; z-index: 20; color: #7CFFF0; font-size: 14px;
+  }
+</style>
+</head>
+<body>
+<div id="container">
+  <div id="loading">Loading model...</div>
+  <video id="video" autoplay playsinline muted></video>
+  <canvas id="canvas"></canvas>
+  <div id="overlay-ui">
+    CYBER FRAME // <span id="frameStatus">STANDBY</span><br>
+    HAND FRAME ACQUIRED: <span id="handCount">0</span>
+  </div>
+  <div id="status">Dekatkan jempol &amp; telunjuk di depan wajah untuk aktifkan efek</div>
+</div>
+
+<script type="module">
+import { HandLandmarker, FilesetResolver } from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
+
+const video = document.getElementById("video");
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+const frameStatusEl = document.getElementById("frameStatus");
+const handCountEl = document.getElementById("handCount");
+const loadingEl = document.getElementById("loading");
+
+let handLandmarker;
+let lastVideoTime = -1;
+
+async function init() {
+  const vision = await FilesetResolver.forVisionTasks(
+    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm"
+  );
+  handLandmarker = await HandLandmarker.createFromOptions(vision, {
+    baseOptions: {
+      modelAssetPath:
+        "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
+      delegate: "GPU"
+    },
+    runningMode: "VIDEO",
+    numHands: 2
+  });
+
+  loadingEl.style.display = "none";
+  startCamera();
+}
+
+async function startCamera() {
+  const stream = await navigator.mediaDevices.getUserMedia({
+    video: { facingMode: "user", width: 1280, height: 720 },
+    audio: false
+  });
+  video.srcObject = stream;
+  await video.play();
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  requestAnimationFrame(loop);
+}
+
+function dist(a, b) {
+  return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+function drawCyberFrame(ctx, p1, p2, w, h, t) {
+  // p1 = ujung jempol, p2 = ujung telunjuk (normalized coords 0-1)
+  const x1 = p1.x * w, y1 = p1.y * h;
+  const x2 = p2.x * w, y2 = p2.y * h;
+
+  const cx = (x1 + x2) / 2;
+  const cy = (y1 + y2) / 2;
+  const length = Math.hypot(x2 - x1, y2 - y1) * 2.4; // biar melebar
+  const barHeight = length * 0.28;
+  const angle = Math.atan2(y2 - y1, x2 - x1);
+
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(angle);
+
+  // background bar (semi transparan gelap)
+  ctx.fillStyle = "rgba(10, 20, 30, 0.55)";
+  ctx.fillRect(-length / 2, -barHeight / 2, length, barHeight);
+
+  // scan lines horizontal
+  ctx.strokeStyle = "rgba(124, 255, 240, 0.55)";
+  ctx.lineWidth = 1;
+  const lineSpacing = 4;
+  for (let y = -barHeight / 2; y <= barHeight / 2; y += lineSpacing) {
+    ctx.beginPath();
+    ctx.moveTo(-length / 2, y);
+    ctx.lineTo(length / 2, y);
+    ctx.stroke();
+  }
+
+  // animated moving scan line (efek glitch bergerak)
+  const scanX = -length / 2 + ((t / 6) % length);
+  const grad = ctx.createLinearGradient(scanX - 20, 0, scanX + 20, 0);
+  grad.addColorStop(0, "rgba(124,255,240,0)");
+  grad.addColorStop(0.5, "rgba(124,255,240,0.9)");
+  grad.addColorStop(1, "rgba(124,255,240,0)");
+  ctx.fillStyle = grad;
+  ctx.fillRect(-length / 2, -barHeight / 2, length, barHeight);
+
+  // border dashed cyan
+  ctx.setLineDash([6, 4]);
+  ctx.strokeStyle = "#7CFFF0";
+  ctx.lineWidth = 2;
+  ctx.shadowColor = "#7CFFF0";
+  ctx.shadowBlur = 12;
+  ctx.strokeRect(-length / 2, -barHeight / 2, length, barHeight);
+  ctx.setLineDash([]);
+  ctx.shadowBlur = 0;
+
+  ctx.restore();
+
+  // label kecil "CYBER FRAME // ACTIVE" di atas bar
+  ctx.save();
+  ctx.font = "11px monospace";
+  ctx.fillStyle = "#7CFFF0";
+  ctx.shadowColor = "#000";
+  ctx.shadowBlur = 4;
+  ctx.textAlign = "center";
+  ctx.fillText("CYBER FRAME // ACTIVE", cx, cy - barHeight / 2 - 14);
+  ctx.restore();
+}
+
+function drawHandPoints(ctx, landmarks, w, h) {
+  ctx.fillStyle = "rgba(124,255,240,0.8)";
+  landmarks.forEach(pt => {
+    ctx.beginPath();
+    ctx.arc(pt.x * w, pt.y * h, 2.5, 0, Math.PI * 2);
+    ctx.fill();
+  });
+}
+
+function loop() {
+  const w = canvas.width, h = canvas.height;
+  if (video.currentTime !== lastVideoTime) {
+    lastVideoTime = video.currentTime;
+    const now = performance.now();
+    const result = handLandmarker.detectForVideo(video, now);
+
+    ctx.clearRect(0, 0, w, h);
+
+    let activeCount = 0;
+
+    if (result.landmarks && result.landmarks.length > 0) {
+      handCountEl.textContent = result.landmarks.length;
+
+      result.landmarks.forEach(landmarks => {
+        const thumbTip = landmarks[4];
+        const indexTip = landmarks[8];
+        drawHandPoints(ctx, landmarks, w, h);
+
+        const d = dist(thumbTip, indexTip);
+        // jarak "pinch" ideal buat efek ini: nggak nempel, nggak kejauhan
+        if (d > 0.03 && d < 0.28) {
+          drawCyberFrame(ctx, thumbTip, indexTip, w, h, now);
+          activeCount++;
+        }
+      });
+    } else {
+      handCountEl.textContent = "0";
+    }
+
+    frameStatusEl.textContent = activeCount > 0 ? "ACTIVE" : "STANDBY";
+  }
+  requestAnimationFrame(loop);
+}
+
+init().catch(err => {
+  loadingEl.textContent = "Gagal load kamera/model: " + err.message;
+  console.error(err);
+});
+</script>
+</body>
+</html>
