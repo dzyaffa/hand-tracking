@@ -130,58 +130,95 @@ function dist(a, b) {
   return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
-// --- efek 2 tangan: quad yang narik dari ujung jempol & telunjuk tiap tangan ---
+// gambar frame video ke canvas sbg background (mirrored, "cover")
+function drawVideoBackground() {
+  ctx.save();
+  ctx.translate(canvas.width, 0);
+  ctx.scale(-1, 1);
+  ctx.drawImage(video, srcRect.x, srcRect.y, srcRect.w, srcRect.h, 0, 0, canvas.width, canvas.height);
+  ctx.restore();
+}
+
+// --- efek 2 tangan: quad dari ujung jempol & telunjuk tiap tangan, isinya glitch grayscale ---
 // urutan titik: leftThumb -> rightThumb -> rightIndex -> leftIndex -> tutup ke leftThumb
-function drawQuadFrame(leftThumb, leftIndex, rightThumb, rightIndex, t) {
-  const pts = [leftThumb, rightThumb, rightIndex, leftIndex];
+function drawGlitchQuad(pts) {
+  const xs = pts.map(p => p.x), ys = pts.map(p => p.y);
+  const minX = Math.min(...xs), maxX = Math.max(...xs);
+  const minY = Math.min(...ys), maxY = Math.max(...ys);
+  const bw = maxX - minX, bh = maxY - minY;
+  if (bw <= 1 || bh <= 1) return;
 
   ctx.save();
   ctx.beginPath();
   ctx.moveTo(pts[0].x, pts[0].y);
   for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
   ctx.closePath();
+  ctx.clip(); // batasi semua gambar berikutnya cuma di dalam quad
 
-  // isi transparan
-  ctx.fillStyle = "rgba(10, 20, 30, 0.35)";
-  ctx.fill();
+  // ubah isi quad jadi hitam putih (redraw canvas sendiri dgn filter grayscale)
+  ctx.filter = "grayscale(1) contrast(1.15)";
+  ctx.drawImage(canvas, 0, 0, canvas.width, canvas.height, 0, 0, canvas.width, canvas.height);
+  ctx.filter = "none";
 
-  // garis putus-putus tipis buat semua sisi
+  // glitch: beberapa strip horizontal digeser dikit secara random tiap frame
+  const bandCount = 5;
+  for (let i = 0; i < bandCount; i++) {
+    const bandH = Math.max(3, bh * (0.04 + Math.random() * 0.08));
+    const by = minY + Math.random() * Math.max(1, bh - bandH);
+    const shift = (Math.random() * 2 - 1) * bw * 0.08;
+    ctx.drawImage(canvas, minX, by, bw, bandH, minX + shift, by, bw, bandH);
+  }
+
+  // scanline garis-garis horizontal tipis
+  ctx.strokeStyle = "rgba(0,0,0,0.25)";
+  ctx.lineWidth = 1;
+  for (let y = minY; y < maxY; y += 3) {
+    ctx.beginPath();
+    ctx.moveTo(minX, y);
+    ctx.lineTo(maxX, y);
+    ctx.stroke();
+  }
+
+  // tint cyan tipis biar keliatan "aktif"
+  ctx.fillStyle = "rgba(124,255,240,0.06)";
+  ctx.fillRect(minX, minY, bw, bh);
+
+  ctx.restore(); // lepas clip
+
+  // border quad: rata tipis semua sisi, ga ada yang ditebalin
+  ctx.save();
   ctx.setLineDash([5, 5]);
   ctx.lineWidth = 1.5;
-  ctx.strokeStyle = "rgba(124,255,240,0.6)";
+  ctx.strokeStyle = "#7CFFF0";
+  ctx.shadowColor = "#7CFFF0";
+  ctx.shadowBlur = 6;
+  ctx.beginPath();
+  ctx.moveTo(pts[0].x, pts[0].y);
+  for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+  ctx.closePath();
   ctx.stroke();
   ctx.setLineDash([]);
-
-  // highlight garis bawah (jempol-jempol) lebih tebal & nyala, ciri khas efeknya
-  ctx.beginPath();
-  ctx.moveTo(leftThumb.x, leftThumb.y);
-  ctx.lineTo(rightThumb.x, rightThumb.y);
-  ctx.strokeStyle = "#7CFFF0";
-  ctx.lineWidth = 4;
-  ctx.shadowColor = "#7CFFF0";
-  ctx.shadowBlur = 12;
-  ctx.stroke();
   ctx.shadowBlur = 0;
 
-  // dot di tiap sudut
+  // dot kecil semua sama ukurannya di tiap sudut
   ctx.fillStyle = "#7CFFF0";
   pts.forEach(p => {
     ctx.beginPath();
-    ctx.arc(p.x, p.y, 4, 0, Math.PI * 2);
+    ctx.arc(p.x, p.y, 3, 0, Math.PI * 2);
     ctx.fill();
   });
   ctx.restore();
 
   // label di dekat sisi atas (index-index)
-  const midTopX = (leftIndex.x + rightIndex.x) / 2;
-  const midTopY = (leftIndex.y + rightIndex.y) / 2;
+  const midTopX = (pts[2].x + pts[3].x) / 2;
+  const midTopY = (pts[2].y + pts[3].y) / 2;
   ctx.save();
   ctx.font = "11px monospace";
   ctx.fillStyle = "#7CFFF0";
   ctx.shadowColor = "#000";
   ctx.shadowBlur = 4;
   ctx.textAlign = "center";
-  ctx.fillText("CYBER FRAME // ACTIVE", midTopX, midTopY - 12);
+  ctx.fillText("CYBER FRAME // GLITCH", midTopX, midTopY - 12);
   ctx.restore();
 }
 
@@ -202,6 +239,7 @@ function loop() {
     const result = handLandmarker.detectForVideo(video, now);
 
     ctx.clearRect(0, 0, canvas.width, canvas.height);
+    drawVideoBackground();
 
     let statusText = "STANDBY";
 
@@ -212,8 +250,6 @@ function loop() {
         // 2 tangan kedeteksi -> tarik quad dari 4 titik fingertip (thumb+index tiap tangan)
         const hand0 = result.landmarks[0];
         const hand1 = result.landmarks[1];
-        drawHandPoints(hand0);
-        drawHandPoints(hand1);
 
         const h0Thumb = toCanvasXY(hand0[4]);
         const h0Index = toCanvasXY(hand0[8]);
@@ -230,7 +266,7 @@ function loop() {
           rightThumb = h0Thumb; rightIndex = h0Index;
         }
 
-        drawQuadFrame(leftThumb, leftIndex, rightThumb, rightIndex, now);
+        drawGlitchQuad([leftThumb, rightThumb, rightIndex, leftIndex]);
         statusText = "ACTIVE (2 HANDS)";
       } else {
         // cuma 1 tangan -> mati total, ga gambar apa-apa
